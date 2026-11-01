@@ -1,0 +1,6 @@
+{
+  "name": "edith AI",
+  "description": "Voice-first personal AI companion for Android with 3D UI, Gemini Live, Website Forge, and multi-personality voice interaction.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

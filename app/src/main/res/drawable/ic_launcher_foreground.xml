@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer faint aura ring -->
+    <path
+        android:pathData="M 54,26 A 28,28 0 1,1 53.99,26 Z"
+        android:strokeColor="#333FE0D0"
+        android:strokeWidth="3.5" />
+    <!-- Secondary glowing ring -->
+    <path
+        android:pathData="M 54,31 A 23,23 0 1,1 53.99,31 Z"
+        android:strokeColor="#66FF6FAE"
+        android:strokeWidth="2.5" />
+    <!-- Outer energy core -->
+    <path
+        android:pathData="M 54,36 A 18,18 0 1,1 53.99,36 Z"
+        android:fillColor="#FF8A3D" />
+    <!-- Glowing marigold pearl center -->
+    <path
+        android:pathData="M 54,39 A 15,15 0 1,1 53.99,39 Z"
+        android:fillColor="#FFB547" />
+    <!-- Specular highlight -->
+    <path
+        android:pathData="M 48,42 A 5,4 45 1,1 47.99,42 Z"
+        android:fillColor="#FFFFFFFF" />
+</vector>
