@@ -14,7 +14,7 @@ on:
           - play
   push:
     tags:
-      - "v*.*.*"
+      - "v*"
 
 permissions:
   contents: write
