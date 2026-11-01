@@ -1,0 +1,167 @@
+name: Build & Release Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      flavor:
+        description: "Distribution flavor to build ('direct' for full power, 'play' for Play Store, 'both' for both)"
+        required: false
+        default: "both"
+        type: choice
+        options:
+          - both
+          - direct
+          - play
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.3.1"
+
+      - name: Ensure .env file exists for Secrets Gradle Plugin
+        run: |
+          if [ ! -f .env ]; then
+            cp .env.example .env || touch .env
+          fi
+
+      - name: Generate debug.keystore from base64 if present
+        run: |
+          if [ -f debug.keystore.base64 ] && [ ! -f debug.keystore ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          elif [ ! -f debug.keystore ]; then
+            keytool -genkeypair -v \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Check Signing Credentials & Decode Release Keystore
+        id: signing_check
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
+            echo "has_signing_secrets=true" >> "$GITHUB_OUTPUT"
+            echo "$ANDROID_KEYSTORE_BASE64" | tr -d '\n\r ' | base64 -d > "${GITHUB_WORKSPACE}/input-release.jks"
+
+            # Normalize keystore alias to 'upload' and key password to ANDROID_KEY_PASSWORD so it works seamlessly with app/build.gradle.kts
+            if [ "$ANDROID_KEY_ALIAS" != "upload" ]; then
+              keytool -importkeystore \
+                -srckeystore "${GITHUB_WORKSPACE}/input-release.jks" \
+                -srcstorepass "$ANDROID_KEYSTORE_PASSWORD" \
+                -srckeypass "$ANDROID_KEY_PASSWORD" \
+                -srcalias "$ANDROID_KEY_ALIAS" \
+                -destkeystore "${GITHUB_WORKSPACE}/my-upload-key.jks" \
+                -deststorepass "$ANDROID_KEYSTORE_PASSWORD" \
+                -destkeypass "$ANDROID_KEY_PASSWORD" \
+                -destalias "upload" \
+                -noprompt
+              rm -f "${GITHUB_WORKSPACE}/input-release.jks"
+            else
+              mv "${GITHUB_WORKSPACE}/input-release.jks" "${GITHUB_WORKSPACE}/my-upload-key.jks"
+            fi
+          else
+            echo "has_signing_secrets=false" >> "$GITHUB_OUTPUT"
+            if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+              echo "::error::Release tag push detected (${GITHUB_REF_NAME}), but Android signing secrets (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD) are missing. Refusing to publish an unsigned release APK."
+              exit 1
+            fi
+            echo "::warning::Signing secrets are not configured. Falling back to building clearly labelled Debug APKs for manual workflow run."
+          fi
+
+      - name: Build Signed Release APKs
+        if: steps.signing_check.outputs.has_signing_secrets == 'true'
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          mkdir -p dist
+          FLAVOR="${{ inputs.flavor || 'both' }}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]] || [ "$FLAVOR" == "both" ]; then
+            gradle :app:assembleDirectRelease --no-daemon
+            gradle :app:assemblePlayRelease --no-daemon
+            cp app/build/outputs/apk/direct/release/app-direct-release.apk dist/edith-AI-direct-release-signed.apk
+            cp app/build/outputs/apk/play/release/app-play-release.apk dist/edith-AI-play-release-signed.apk
+          elif [ "$FLAVOR" == "direct" ]; then
+            gradle :app:assembleDirectRelease --no-daemon
+            cp app/build/outputs/apk/direct/release/app-direct-release.apk dist/edith-AI-direct-release-signed.apk
+          elif [ "$FLAVOR" == "play" ]; then
+            gradle :app:assemblePlayRelease --no-daemon
+            cp app/build/outputs/apk/play/release/app-play-release.apk dist/edith-AI-play-release-signed.apk
+          fi
+
+      - name: Build Fallback Debug APKs (Manual Run Without Signing Secrets)
+        if: steps.signing_check.outputs.has_signing_secrets == 'false'
+        run: |
+          mkdir -p dist
+          FLAVOR="${{ inputs.flavor || 'both' }}"
+          if [ "$FLAVOR" == "both" ]; then
+            gradle :app:assembleDirectDebug --no-daemon
+            gradle :app:assemblePlayDebug --no-daemon
+            cp app/build/outputs/apk/direct/debug/app-direct-debug.apk dist/edith-AI-direct-DEBUG-fallback.apk
+            cp app/build/outputs/apk/play/debug/app-play-debug.apk dist/edith-AI-play-DEBUG-fallback.apk
+          elif [ "$FLAVOR" == "direct" ]; then
+            gradle :app:assembleDirectDebug --no-daemon
+            cp app/build/outputs/apk/direct/debug/app-direct-debug.apk dist/edith-AI-direct-DEBUG-fallback.apk
+          elif [ "$FLAVOR" == "play" ]; then
+            gradle :app:assemblePlayDebug --no-daemon
+            cp app/build/outputs/apk/play/debug/app-play-debug.apk dist/edith-AI-play-DEBUG-fallback.apk
+          fi
+
+      - name: Clean Up Temporary Keystore Files
+        if: always()
+        run: |
+          rm -f "${GITHUB_WORKSPACE}/my-upload-key.jks" "${GITHUB_WORKSPACE}/input-release.jks"
+
+      - name: Upload APK Artifact to GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: edith-AI-android-apks-${{ github.run_number }}
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release (On Version Tag Push)
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing_check.outputs.has_signing_secrets == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "edith AI ${{ github.ref_name }}"
+          files: |
+            dist/edith-AI-direct-release-signed.apk
+            dist/edith-AI-play-release-signed.apk
+          generate_release_notes: true
+          draft: false
+          prerelease: false
